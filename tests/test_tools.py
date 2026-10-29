@@ -76,6 +76,11 @@ def test_edit_file_ambiguous_text(tools, ws):
         tools["edit_file"].run(path="dup.py", old_text="x = 1", new_text="x = 2")
 
 
+def test_read_file_strips_windows_bom(tools, ws):
+    (ws.root / "bom.py").write_text("x = 1\n", encoding="utf-8-sig")
+    assert "1| x = 1" in tools["read_file"].run(path="bom.py")
+
+
 def test_write_file_creates_folders(tools, ws):
     tools["write_file"].run(path="new/deep/file.txt", content="hello\n")
     assert (ws.root / "new" / "deep" / "file.txt").read_text(encoding="utf-8") == "hello\n"

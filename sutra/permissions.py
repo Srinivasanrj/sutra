@@ -9,6 +9,10 @@ Modes:
 MODES = ("default", "accept-edits", "auto")
 
 
+class UserStop(Exception):
+    """The user can't or won't answer any more (e.g. input ended), so the current task stops."""
+
+
 class Permissions:
     def __init__(self, mode: str = "default"):
         self.set_mode(mode)

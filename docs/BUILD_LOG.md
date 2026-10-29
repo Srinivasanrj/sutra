@@ -76,11 +76,54 @@ agent.run()  ──►  send messages + tool list to the model (llm.py)
 | How did you test it? | 24 pytest tests: tools on temporary folders, and the agent loop with a fake model, covering permissions, errors and step limits. Plus live tests with qwen3. |
 | What was the hardest problem? | Speed on a CPU with little free RAM. I measured both models (4B: 0.1 tok/s while swapping; 1.7B: 31 tok/s) and made 1.7B the default. |
 
+## Stage 2: Plan mode + to-do list (done, 29 Oct 2026)
+
+**Result:** the agent can plan before acting, and track its work in a checklist. **40 tests pass** (16 new). In a live test, qwen3:1.7b investigated read-only, presented a plan, got approval, turned it into a to-do list, carried it out and ticked off every item.
+
+### What was added
+
+| File | Change |
+| --- | --- |
+| `sutra/tools/planning.py` | **New.** `TodoList` (with lenient input cleaning), `todo_write` and `exit_plan_mode` tools, and `steps_from_plan()`, which turns a plan into to-do items |
+| `sutra/agent.py` | Plan-mode state; `available_tools()` changes what the model is offered; code-level blocking of write tools; plan review; small-model fallbacks |
+| `sutra/ui.py` | Checklist display (☐ ◐ ☑), plan approval panel, safer prompts |
+| `sutra/cli.py` | `/plan`, `/todos`, `--plan`, **Shift+Tab** mode cycling, and a bottom toolbar showing mode, model and thinking |
+| `sutra/permissions.py` | `UserStop`, so a task stops cleanly when input ends |
+| `tests/test_planning.py` | **New.** 16 tests for to-dos, plan mode, approval, rejection and fallbacks |
+
+### How plan mode works
+
+```
+/plan (or Shift+Tab)  →  plan_mode = True
+   │
+   ▼
+model is offered only: read_file, list_files, search_code, exit_plan_mode
+(+ a reminder of the rules is appended to every request)
+   │
+   ▼
+model investigates, then calls exit_plan_mode(plan="1. … 2. …")
+   │
+   ▼
+you see the plan ──► [y] approve: plan_mode = False, plan → to-do list, edit tools unlocked
+              └────► [n] + feedback: feedback goes back to the model, it revises the plan
+```
+
+### Key ideas (for interviews)
+
+1. **Defence in depth.** Plan mode limits the model in two ways: write tools aren't offered (prompt level), *and* `execute()` rejects them if requested anyway (code level). Never rely on the prompt alone, because models can ask for tools they weren't given.
+2. **The tool list can change mid-task.** The schemas are rebuilt every round, so the moment you approve, edit tools appear in the next request.
+3. **Requests vs history.** The plan-mode reminder and `/no_think` are added to the *request* but not saved in `messages`. The history stays clean, and the reminder is always the last thing the model reads.
+4. **Designing for weak models.** Live tests showed qwen3:1.7b (a) made a to-do list instead of calling `exit_plan_mode`, and (b) wrote numbered plans on one line. Fixes: in plan mode, offer only one way to finish; treat a text reply as the plan; nudge once on an empty reply; split inline numbered lists.
+5. **Real bugs found by live testing, not unit tests.** Rich hid `[y]`/`[n]` because it reads `[...]` as markup, and PowerShell pipes add an invisible byte-order mark. Both are fixed, and both now have tests.
+
+### Known limitation
+qwen3:1.7b sometimes makes a poor plan: it once created a new file instead of editing `calc.py`, then overwrote it. Sutra's machinery worked correctly; the model's judgement didn't. qwen3:4b plans better when there's enough free RAM. Stage 7 (benchmark) will measure success rates for each model.
+
 ## Next stages
 
 | Stage | Feature | Why it's impressive |
 | --- | --- | --- |
-| 2 | Plan mode + live to-do list | The agent plans first and you approve. Shows agent design |
+| ~~2~~ | ~~Plan mode + live to-do list~~ | ✅ Done |
 | 3 | Checkpoints + `/undo` | Every edit is snapshotted and can be rolled back |
 | 4 | Saved sessions + context compaction | Long chats are summarised to fit a small model's context window |
 | 5 | Tree-sitter repo map | The model gets a compact map of functions and classes instead of whole files |

@@ -5,7 +5,9 @@ import sys
 from pathlib import Path
 
 from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
 from rich.panel import Panel
 from rich.table import Table
 
@@ -23,7 +25,10 @@ HELP = {
     "/model [name]": "Show or switch the model",
     "/think": "Turn the model's thinking on/off (on = smarter, slower)",
     "/mode [name]": f"Permission mode: {', '.join(MODES)}",
+    "/plan": "Plan mode on/off: the agent only reads, then asks you to approve a plan",
+    "/todos": "Show the current to-do list",
     "/tools": "List the tools the agent can use",
+    "Shift+Tab": "Cycle modes: default → accept-edits → plan",
     "/exit": "Quit (or press Ctrl+D)",
 }
 
@@ -32,7 +37,7 @@ def welcome(ui: TerminalUI, agent: Agent) -> None:
     body = (
         f"[bold]Sutra[/bold] v{__version__} · local AI coding agent\n"
         f"[dim]model[/dim] {agent.model}   [dim]thinking[/dim] {'on' if agent.think else 'off'}   "
-        f"[dim]mode[/dim] {agent.permissions.mode}\n"
+        f"[dim]mode[/dim] {mode_label(agent)}\n"
         f"[dim]folder[/dim] {agent.ws.root}\n\n"
         "[dim]Ask anything about this folder. /help for commands, Ctrl+C to stop a reply.[/dim]"
     )
@@ -73,6 +78,14 @@ def handle_command(line: str, agent: Agent, ui: TerminalUI, llm: OllamaClient) -
                 ui.notice(f"Mode set to {arg}.", "green")
             except ValueError as e:
                 ui.notice(str(e), "red")
+    elif cmd == "/plan":
+        agent.plan_mode = not agent.plan_mode
+        ui.notice(f"Plan mode {'on: the agent will only read and then propose a plan' if agent.plan_mode else 'off'}.", "magenta")
+    elif cmd == "/todos":
+        if agent.todos.items:
+            ui.show_todos(agent.todos.items)
+        else:
+            ui.notice("No to-do list yet.", "cyan")
     elif cmd == "/tools":
         for t in agent.tools.values():
             tag = f" [yellow]({t.permission})[/yellow]" if t.permission else ""
@@ -80,6 +93,32 @@ def handle_command(line: str, agent: Agent, ui: TerminalUI, llm: OllamaClient) -
     else:
         ui.notice(f"Unknown command {cmd}. Type /help.", "red")
     return True
+
+
+def mode_label(agent: Agent) -> str:
+    return "plan" if agent.plan_mode else agent.permissions.mode
+
+
+def cycle_mode(agent: Agent) -> None:
+    """Shift+Tab: default → accept-edits → plan → default."""
+    if agent.plan_mode:
+        agent.plan_mode = False
+        agent.permissions.set_mode("default")
+    elif agent.permissions.mode == "default":
+        agent.permissions.set_mode("accept-edits")
+    else:
+        agent.permissions.set_mode("default")
+        agent.plan_mode = True
+
+
+def toolbar(agent: Agent):
+    colors = {"plan": "ansimagenta", "accept-edits": "ansigreen", "auto": "ansired", "default": "ansicyan"}
+    mode = mode_label(agent)
+    return HTML(
+        f" mode: <b><style fg='{colors.get(mode, 'ansicyan')}'>{mode}</style></b>"
+        f"  ·  model: {agent.model}  ·  thinking: {'on' if agent.think else 'off'}"
+        "  ·  <i>shift+tab to switch mode</i>"
+    )
 
 
 def run_once(agent: Agent, ui: TerminalUI, prompt: str) -> int:
@@ -98,6 +137,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("-p", "--prompt", help="Run one request and exit (non-interactive)")
     parser.add_argument("--model", help="Model to use (overrides SUTRA_MODEL)")
     parser.add_argument("--mode", choices=MODES, default="default", help="Permission mode")
+    parser.add_argument("--plan", action="store_true", help="Start in plan mode")
     args = parser.parse_args(argv)
 
     settings = Settings.load()
@@ -120,6 +160,7 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     agent = Agent(settings, llm, Workspace(root), ui, Permissions(args.mode))
+    agent.plan_mode = args.plan
 
     if args.prompt:
         sys.exit(run_once(agent, ui, args.prompt))
@@ -127,7 +168,16 @@ def main(argv: list[str] | None = None) -> None:
     welcome(ui, agent)
     history = Path.home() / ".sutra" / "history"
     history.parent.mkdir(parents=True, exist_ok=True)
-    session = PromptSession(history=FileHistory(str(history)))
+    keys = KeyBindings()
+
+    @keys.add("s-tab")
+    def _(event):
+        cycle_mode(agent)
+        event.app.invalidate()  # redraw the toolbar
+
+    session = PromptSession(
+        history=FileHistory(str(history)), key_bindings=keys, bottom_toolbar=lambda: toolbar(agent)
+    )
 
     while True:
         try:

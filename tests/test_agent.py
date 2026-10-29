@@ -20,10 +20,20 @@ class FakeLLM:
 
 
 class FakeUI:
-    def __init__(self, answer="y"):
+    def __init__(self, answer="y", plan_answers=None):
         self.answer = answer
         self.asked = []
         self.results = []
+        self.plan_answers = list(plan_answers or [])  # (approved, feedback) per plan review
+        self.plans = []
+        self.todo_snapshots = []
+
+    def review_plan(self, plan):
+        self.plans.append(plan)
+        return self.plan_answers.pop(0)
+
+    def show_todos(self, items):
+        self.todo_snapshots.append([(i.content, i.status) for i in items])
 
     def stream(self, events):
         text, calls = "", []

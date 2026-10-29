@@ -11,6 +11,7 @@ from rich.syntax import Syntax
 from rich.text import Text
 
 from sutra.llm import ToolCall
+from sutra.permissions import UserStop
 
 THINKING_TAIL_LINES = 6
 
@@ -84,13 +85,47 @@ class TerminalUI:
             title = f"Apply this change ({call.name})?"
         self.console.print(Panel(body, title=title, border_style="yellow", expand=False))
         while True:
-            answer = self.console.input("[yellow]  [y] yes  [n] no  [a] always for this session › [/]").strip().lower()
+            answer = self._ask("  [y] yes  [n] no  [a] always for this session › ", "yellow")
             if answer in ("y", "yes", ""):
                 return "y"
             if answer in ("n", "no"):
                 return "n"
             if answer in ("a", "always"):
                 return "a"
+
+    def _ask(self, prompt: str, style: str, lower: bool = True) -> str:
+        """Read one answer. Raises UserStop when input has ended (e.g. piped input ran out)."""
+        try:
+            # Text(), not a markup string, so "[y]" is shown as-is instead of read as a style tag.
+            raw = self.console.input(Text(prompt, style=style))
+        except EOFError:
+            raise UserStop("No more input, so the task was stopped.")
+        answer = raw.strip().lstrip("﻿").strip()  # PowerShell pipes can add a byte-order mark
+        return answer.lower() if lower else answer
+
+    # ---------- planning ----------
+    def show_todos(self, items) -> None:
+        if not items:
+            return
+        done = sum(i.status == "completed" for i in items)
+        lines = Text(f"  To-do ({done}/{len(items)} done)\n", style="bold")
+        for i in items:
+            if i.status == "completed":
+                lines.append("  ☑ ", style="green").append(i.content + "\n", style="dim strike")
+            elif i.status == "in_progress":
+                lines.append("  ◐ ", style="yellow").append(i.content + "\n", style="bold")
+            else:
+                lines.append("  ☐ ", style="dim").append(i.content + "\n")
+        self.console.print(lines, end="")
+
+    def review_plan(self, plan: str) -> tuple[bool, str]:
+        self.console.print(Panel(Markdown(plan), title="📋 Plan for your approval", border_style="magenta", expand=False))
+        while True:
+            answer = self._ask("  [y] approve and start  [n] keep planning › ", "magenta")
+            if answer in ("y", "yes", ""):
+                return True, ""
+            if answer in ("n", "no"):
+                return False, self._ask("  What should change? (Enter to skip) › ", "magenta", lower=False)
 
     # ---------- misc ----------
     def notice(self, message: str, style: str = "yellow") -> None:

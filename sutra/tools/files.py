@@ -20,10 +20,11 @@ def _walk(ws: Workspace, start: Path):
 
 
 def _read_text(path: Path) -> str:
+    # utf-8-sig also strips the byte-order mark that many Windows editors add.
     try:
-        return path.read_text(encoding="utf-8")
+        return path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError:
-        return path.read_text(encoding="utf-8", errors="replace")
+        return path.read_text(encoding="utf-8-sig", errors="replace")
 
 
 def make_diff(old: str, new: str, path: str) -> str:
